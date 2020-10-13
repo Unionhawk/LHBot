@@ -106,6 +106,20 @@ function publicOnMessage(message, config) {
   if ((parseInt(message.id) > parseInt(global.dataLog[message.guild.id][message.channel.id].lastMessageID)) || !global.dataLog[message.guild.id][message.channel.id].lastMessageID) {
     global.dataLog[message.guild.id][message.channel.id].lastMessageID = message.id;
   }
+
+  // get pruneData array as an ES6 map
+  let pruneData = new Map(global.dataLog[message.guild.id].pruneData);
+  // If a non-bot user isn't in the pruneData array yet, or has a last-active entry older than this one, then update it
+  if ((!pruneData.get(message.author.id) || (parseInt(message.id) > parseInt(pruneData.get(message.author.id)))) && !message.author.bot) {
+      if (!message.guild.member(message.author.id)) {
+        pruneData.delete(message.author.id);
+      }
+      else {
+        pruneData.set(message.author.id, message.id);
+      }
+    global.dataLog[message.guild.id].pruneData = [...pruneData];
+  }
+
   writeData();
 }
 
@@ -328,7 +342,35 @@ async function getTotalServerUsers(client) {
   }
 }
 
+// This will compare the pruneData array that stores all users' last activity
+// to the current guild users, doing a clean-up by removing any users which
+// are no longer in the server at the time the command is being run and 
+// initalizing any users not yet in the log
+async function pruneDataMaintenance(client) {
+  for (const gID of Object.keys(global.dataLog)) {
+    const pruneData = new Map(global.dataLog[gID].pruneData);
+    const g = await client.guilds.cache.get(gID);
+    const currentGuildUsrs = await g.members.cache.filter(member => !member.user.bot);
+    const usersToAdd = currentGuildUsrs.filter(user => !pruneData.has(user.user.id));
+    for (user of usersToAdd) {
+      pruneData.set(user[0], 0);
+      //console.log("adding " + user[0]);
+    }
+    if (global.dataLog[gID].pruneData) {
+    const usersToRemove = global.dataLog[gID].pruneData.filter(user => !currentGuildUsrs.has(user[0]));
+    for (user of usersToRemove) {
+        pruneData.delete(user[0]);
+        //console.log("deleting " + user[0]);
+      }
+    }
+    global.dataLog[gID].pruneData = [...pruneData];
+    writeData();
+  }
+}
+
+
 function publicOnReady(config, client, callback) {
+  pruneDataMaintenance(client);
   restoreMessages(config, client, callback);
   uniqueUserCounter (config, client);
   getTotalServerUsers (client);
